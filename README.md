@@ -39,7 +39,7 @@ QR/widget ─POST …/responses───┤              │
 
 ```bash
 dotnet test
-dotnet run --project src/CustomerPulse    # open the printed URL
+dotnet run --project src/CustomerPulse    # http://localhost:8080 (same as Docker, matches Pulse:BaseUrl)
 ```
 
 ```bash
