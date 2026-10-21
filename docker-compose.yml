@@ -1,0 +1,12 @@
+services:
+  customer-pulse:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      Pulse__BaseUrl: http://localhost:8080
+      # Pulse__SlackWebhookUrl: ${SLACK_WEBHOOK_URL}   # put it in .env, never commit it
+    volumes:
+      - pulse-data:/data
+volumes:
+  pulse-data:

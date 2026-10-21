@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Customer Pulse</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:0;background:#f5f6f8;color:#111}
+  header{background:#0a7;color:#fff;padding:14px 24px;display:flex;gap:16px;align-items:center}
+  header h1{font-size:20px;margin:0;flex:1} select,input,textarea,button{font:inherit}
+  main{padding:20px 24px;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .card{background:#fff;border-radius:10px;box-shadow:0 1px 3px #0002;padding:16px}
+  .kpis{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .kpi b{display:block;font-size:28px} .kpi span{color:#666;font-size:13px}
+  table{width:100%;border-collapse:collapse;font-size:14px} td,th{padding:5px 6px;border-bottom:1px solid #eee;text-align:left}
+  button{border:0;border-radius:6px;background:#0a7;color:#fff;padding:6px 10px;cursor:pointer} textarea{width:100%;min-height:80px;box-sizing:border-box}
+  .neg{color:#c33}.pos{color:#0a7} small{color:#666}
+</style>
+</head>
+<body>
+<header><h1>Customer Pulse</h1><select id="survey"></select></header>
+<main>
+  <section class="card kpis" id="kpis"></section>
+  <section class="card"><h3>NPS by week</h3><svg id="trend" width="100%" height="160"></svg></section>
+  <section class="card"><h3>What customers talk about</h3><table><thead><tr><th>Topic</th><th>Mentions</th><th>Avg score</th><th>Sentiment</th></tr></thead><tbody id="topics"></tbody></table></section>
+  <section class="card"><h3>Follow-ups</h3><table><tbody id="followups"></tbody></table></section>
+  <section class="card"><h3>New survey</h3>
+    <input id="name" placeholder="Survey name" style="width:100%;box-sizing:border-box"><br><br><button id="create">Create</button>
+    <h3>Invite customers</h3><small>CSV: name,contact,segment</small>
+    <textarea id="csv" placeholder="Thandi,thandi@example.co.za,Gold"></textarea><button id="invite">Create links</button>
+    <pre id="links" style="white-space:pre-wrap;font-size:12px"></pre>
+    <a id="export" href="#">Download responses (CSV)</a>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const get = u => fetch(u).then(r => r.json());
+const cell = (tr, v, cls) => { const td = document.createElement('td'); td.textContent = v ?? ''; if (cls) td.className = cls; tr.appendChild(td); return td; };
+async function surveys(selectId){
+  const list = await get('/api/surveys'); const sel = $('survey'); sel.replaceChildren();
+  for (const s of list){ const o = document.createElement('option'); o.value = s.id; o.textContent = s.name + (s.active ? '' : ' (closed)'); sel.appendChild(o); }
+  if (selectId) sel.value = selectId; load();
+}
+async function load(){
+  const id = $('survey').value; if (!id) return;
+  $('export').href = `/api/surveys/${id}/responses.csv`;
+  const s = await get(`/api/surveys/${id}/summary`);
+  const k = $('kpis'); k.replaceChildren();
+  const kpi = (v, label) => { const d = document.createElement('div'); d.className = 'kpi'; const b = document.createElement('b'); b.textContent = v; const sp = document.createElement('span'); sp.textContent = label; d.append(b, sp); k.appendChild(d); };
+  kpi(s.nps ?? '–', s.marginOfError != null ? `NPS (±${s.marginOfError})` : 'NPS');
+  kpi(s.responses, `${s.promoters} promoters · ${s.passives} passives · ${s.detractors} detractors`);
+  kpi(s.responseRate != null ? s.responseRate + '%' : '–', 'Response rate (invites)');
+  kpi(s.averageSentiment, 'Average comment sentiment (-1..1)');
+  kpi(s.openFollowUps, 'Open follow-ups');
+  const svg = $('trend'); svg.replaceChildren(); const w = 100 / Math.max(s.weekly.length, 1);
+  s.weekly.forEach((wk, i) => {
+    const h = Math.abs(wk.nps) * 0.6, y = wk.nps >= 0 ? 70 - h : 70;
+    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    Object.entries({x: (i * w + w * 0.15) + '%', y, width: (w * 0.7) + '%', height: Math.max(h, 1), fill: wk.nps >= 0 ? '#0a7' : '#c33'}).forEach(([a, v]) => r.setAttribute(a, v));
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    Object.entries({x: (i * w + w / 2) + '%', y: 150, 'text-anchor': 'middle', 'font-size': 11}).forEach(([a, v]) => t.setAttribute(a, v));
+    t.textContent = `${wk.weekStarting.slice(5)}: ${wk.nps}`; svg.append(r, t);
+  });
+  const tb = $('topics'); tb.replaceChildren();
+  for (const t of s.topics){ const tr = document.createElement('tr'); cell(tr, t.topic); cell(tr, t.mentions); cell(tr, t.averageScore); cell(tr, t.averageSentiment, t.averageSentiment < 0 ? 'neg' : 'pos'); tb.appendChild(tr); }
+  const fb = $('followups'); fb.replaceChildren();
+  for (const f of (await get('/api/followups?status=Open')).filter(f => f.response.surveyId == id)){
+    const tr = document.createElement('tr');
+    cell(tr, `${f.customerName ?? 'Anonymous'} (${f.response.score}/10)`); cell(tr, f.response.comment ?? '', 'neg');
+    const b = document.createElement('button'); b.textContent = 'Close';
+    b.onclick = async () => { const note = prompt('What was done?') ?? ''; await fetch(`/api/followups/${f.id}/close`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({note})}); load(); };
+    cell(tr, '').appendChild(b); fb.appendChild(tr);
+  }
+}
+$('survey').onchange = load;
+$('create').onclick = async () => { const r = await fetch('/api/surveys', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: $('name').value})}); if (r.ok) surveys((await r.json()).id); };
+$('invite').onclick = async () => { const r = await fetch(`/api/surveys/${$('survey').value}/invites`, {method:'POST', headers:{'Content-Type':'text/csv'}, body: $('csv').value}); $('links').textContent = (await r.json()).map(i => `${i.customerName}: ${i.link}`).join('\n'); };
+surveys();
+</script>
+</body>
+</html>
